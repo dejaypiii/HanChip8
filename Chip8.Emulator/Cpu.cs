@@ -14,7 +14,7 @@ public sealed class Chip8
     /// - Most programs start at 0x200
     /// - ETI 660 computer programs start at 0x600
     /// </summary>
-    public byte[] Memory { get; private init; } = new byte[4096]; 
+    public byte[] Memory { get; private init; } = new byte[4096];
 
     /// <summary>
     /// General purpose registers
@@ -53,6 +53,7 @@ public sealed class Chip8
 
     public ISoundDevice SoundDevice { get; private init; } = new SoundLogger();
     public Display Display { get; private init; } = new();
+    public IKeyboard Keyboard { get; private init; } = new FakeKeyboard();
 
     public void LoadProgram(byte[] program)
     {
@@ -61,15 +62,18 @@ public sealed class Chip8
 
     public void Run()
     {
-        while (true) // TODO run at 60fps
+        // TODO run at 60fps? if not handle timers at 60 Hz seperately
+        // TODO handle input
+        // TODO handle rendering
+        // TODO handle sound output
+        while (true)
         {
             if (DelayTimer > 0)
             {
                 DelayTimer--;
-                throw new NotImplementedException("Handle delay timer");
             }
 
-            if(SoundTimer > 0)
+            if (SoundTimer > 0)
             {
                 SoundDevice.On();
                 SoundTimer--;
@@ -84,12 +88,12 @@ public sealed class Chip8
             byte opCode = (byte)(instructionHigh & 0xF0 >> 4);
             byte x = (byte)(instructionHigh & 0x0F);
             byte y = (byte)(instructionLow & 0xF0 >> 4);
-            byte z = (byte)(instructionLow & 0x0F);
+            byte n = (byte)(instructionLow & 0x0F);
             byte kk = instructionLow;
             ushort nnn = (ushort)((x << 8) & kk);
             AdvanceToNextInstruction();
-            
-            switch (opCode, x, y, z)
+
+            switch (opCode, x, y, n)
             {
                 case (0x0, 0x0, 0xE, 0x0): // CLS
                     {
@@ -107,7 +111,7 @@ public sealed class Chip8
                         PC = nnn;
                         break;
                     }
-                case (0x2, _, _, _ ): // CALL addr
+                case (0x2, _, _, _): // CALL addr
                     {
                         SP++;
                         Stack[SP] = PC;
@@ -122,7 +126,7 @@ public sealed class Chip8
                         }
                         break;
                     }
-                case (0x04, _, _, _): // SNE Vx, byte
+                case (0x4, _, _, _): // SNE Vx, byte
                     {
                         if (V[x] != kk)
                         {
@@ -130,7 +134,7 @@ public sealed class Chip8
                         }
                         break;
                     }
-                case (0x05, _, _, 0x0): // SE Vx, Vy
+                case (0x5, _, _, 0x0): // SE Vx, Vy
                     {
                         if (V[x] == V[y])
                         {
@@ -138,47 +142,47 @@ public sealed class Chip8
                         }
                         break;
                     }
-                case (0x06, _, _, _): // LD Vx, byte
+                case (0x6, _, _, _): // LD Vx, byte
                     {
                         V[x] = kk;
                         break;
                     }
-                case (0x07, _, _, _): // ADD Vx, byte
+                case (0x7, _, _, _): // ADD Vx, byte
                     {
-                        V[x] = (byte)(V[x] + kk);
+                        V[x] += kk;
                         break;
                     }
-                case (0x08, _, _, 0x0): // LD Vx, Vy
+                case (0x8, _, _, 0x0): // LD Vx, Vy
                     {
                         V[x] = V[y];
                         break;
                     }
-                case (0x08, _, _, 0x1): // OR Vx, Vy
+                case (0x8, _, _, 0x1): // OR Vx, Vy
                     {
-                        V[x] = (byte)(V[x] | V[y]);
+                        V[x] |= V[y];
                         break;
                     }
-                case (0x08, _, _, 0x2): // AND Vx, Vy
+                case (0x8, _, _, 0x2): // AND Vx, Vy
                     {
-                        V[x] = (byte)(V[x] & V[y]);
+                        V[x] &= V[y];
                         break;
                     }
-                case (0x08, _, _, 0x3): // XOR Vx, Vy
+                case (0x8, _, _, 0x3): // XOR Vx, Vy
                     {
-                        V[x] = (byte)(V[x] ^ V[y]);
+                        V[x] ^= V[y];
                         break;
                     }
-                case (0x08, _, _, 0x4): // ADD Vx, Vy
+                case (0x8, _, _, 0x4): // ADD Vx, Vy
                     {
                         var result = V[x] + V[y];
                         V[0xF] = (byte)(result > 0xFF ? 0x1 : 0x0);
                         V[x] = (byte)(result & 0xFF);
                         break;
                     }
-                case (0x08, _, _, 0x5): // SUB Vx, Vy
+                case (0x8, _, _, 0x5): // SUB Vx, Vy
                     {
                         V[0xF] = (byte)(V[x] > V[y] ? 0x1 : 0x0);
-                        V[x] = (byte)(V[x] - V[y]);
+                        V[x] -= V[y];
                         break;
                     }
                 case (0x8, _, _, 0x6): // SHR Vx {, Vy}
@@ -187,117 +191,143 @@ public sealed class Chip8
                         V[x] >>= 1;
                         break;
                     }
+                case (0x8, _, _, 0x7): // SUBN Vx, Vy 
+                    {
+                        V[0xF] = (byte)(V[y] > V[x] ? 0x1 : 0x0);
+                        V[x] -= V[y];
+                        break;
+                    }
+                case (0x8, _, _, 0xE): // SHL Vx {, Vy } 
+                    {
+                        V[0xF] = (byte)((V[x] & 0x80) == 0x80 ? 0x1 : 0x0);
+                        V[x] <<= 1;
+                        break;
+                    }
+                case (0x9, _, _, 0x0): // SNE Vx, Vy
+                    {
+                        if (V[x] != V[y])
+                        {
+                            AdvanceToNextInstruction();
+                        }
+                        break;
+                    }
+                case (0xA, _, _, _): // LD I, addr
+                    {
+                        I = nnn;
+                        break;
+                    }
+                case (0xB, _, _, _): // JP V0, addr
+                    {
+                        PC = (ushort)(nnn + V[0]);
+                        break;
+                    }
+                case (0xC, _, _, _): // RND Vx, byte
+                    {
+                        V[x] = (byte)(Random.Shared.Next(0, 256) & kk);
+                        break;
+                    }
+                case (0xD, _, _, _): // DRW Vx, Vy, nibble
+                    {
+                        byte erased = 0;
+                        for (var i = 0; i < n; ++i)
+                        {
+                            var sprite = Memory[I + i];
+                            for (var pos = 0; pos < 8; ++pos)
+                            {
+                                var bit = sprite >> (7 - pos) & 0x1;
+                                var bufferY = (y + i) % Display.Height;
+                                var bufferX = (x + pos) % Display.Width;
+                                if (bit == 1 && Display.Buffer[V[bufferY], V[bufferX]] == 1)
+                                {
+                                    erased = 1;
+                                }
 
+                                Display.Buffer[V[bufferY], V[bufferX]] = (byte)(Display.Buffer[V[bufferY], V[bufferX]] ^ bit);
+                            }
 
-/* TODO
- * 
-8xy7 - SUBN Vx, Vy
-Set Vx = Vy - Vx, set VF = NOT borrow.
+                        }
+                        V[0xF] = erased;
+                        break;
+                    }
+                case (0xE, _, 0x9, 0xE): // SKP Vx
+                    {
+                        if (Keyboard.KeyPositions[V[x]] == KeyPosition.Down)
+                        {
+                            AdvanceToNextInstruction();
+                        }
+                        break;
+                    }
+                case (0xE, _, 0xA, 0x1): // SKNP Vx
+                    {
+                        if (Keyboard.KeyPositions[V[x]] == KeyPosition.Up)
+                        {
+                            AdvanceToNextInstruction();
+                        }
+                        break;
+                    }
+                case (0xF, _, 0x0, 0x7): // LD Vx, DT
+                    {
+                        V[x] = DelayTimer;
+                        break;
+                    }
+                case (0xF, _, 0x0, 0xA): // LD Vx, K
+                    {
+                        /* TODO Fx0A - LD Vx, K
+                        Wait for a key press, store the value of the key in Vx.
 
-If Vy > Vx, then VF is set to 1, otherwise 0. Then Vx is subtracted from Vy, and the results stored in Vx.
-
-
-8xyE - SHL Vx {, Vy}
-Set Vx = Vx SHL 1.
-
-If the most-significant bit of Vx is 1, then VF is set to 1, otherwise to 0. Then Vx is multiplied by 2.
-
-
-9xy0 - SNE Vx, Vy
-Skip next instruction if Vx != Vy.
-
-The values of Vx and Vy are compared, and if they are not equal, the program counter is increased by 2.
-
-
-Annn - LD I, addr
-Set I = nnn.
-
-The value of register I is set to nnn.
-
-
-Bnnn - JP V0, addr
-Jump to location nnn + V0.
-
-The program counter is set to nnn plus the value of V0.
-
-
-Cxkk - RND Vx, byte
-Set Vx = random byte AND kk.
-
-The interpreter generates a random number from 0 to 255, which is then ANDed with the value kk. The results are stored in Vx. See instruction 8xy2 for more information on AND.
-
-
-Dxyn - DRW Vx, Vy, nibble
-Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision.
-
-The interpreter reads n bytes from memory, starting at the address stored in I. These bytes are then displayed as sprites on screen at coordinates (Vx, Vy). Sprites are XORed onto the existing screen. If this causes any pixels to be erased, VF is set to 1, otherwise it is set to 0. If the sprite is positioned so part of it is outside the coordinates of the display, it wraps around to the opposite side of the screen. See instruction 8xy3 for more information on XOR, and section 2.4, Display, for more information on the Chip-8 screen and sprites.
-
-
-Ex9E - SKP Vx
-Skip next instruction if key with the value of Vx is pressed.
-
-Checks the keyboard, and if the key corresponding to the value of Vx is currently in the down position, PC is increased by 2.
-
-
-ExA1 - SKNP Vx
-Skip next instruction if key with the value of Vx is not pressed.
-
-Checks the keyboard, and if the key corresponding to the value of Vx is currently in the up position, PC is increased by 2.
-
-
-Fx07 - LD Vx, DT
-Set Vx = delay timer value.
-
-The value of DT is placed into Vx.
-
-
-Fx0A - LD Vx, K
-Wait for a key press, store the value of the key in Vx.
-
-All execution stops until a key is pressed, then the value of that key is stored in Vx.
-
-
-Fx15 - LD DT, Vx
-Set delay timer = Vx.
-
-DT is set equal to the value of Vx.
-
-
-Fx18 - LD ST, Vx
-Set sound timer = Vx.
-
-ST is set equal to the value of Vx.
-
-
-Fx1E - ADD I, Vx
-Set I = I + Vx.
-
-The values of I and Vx are added, and the results are stored in I.
-
-
-Fx29 - LD F, Vx
+                        All execution stops until a key is pressed, then the value of that key is stored in Vx.
+                        */
+                        throw new NotImplementedException("LD Vx, K");
+                        break;
+                    }
+                case (0xF, _, 0x1, 0x5): // LD DT, Vx
+                    {
+                        DelayTimer = V[x];
+                        break;
+                    }
+                case (0xF, _, 0x1, 0x8): // LD ST, Vx
+                    {
+                        SoundTimer = V[x];
+                        break;
+                    }
+                case (0xF, _, 0x1, 0xE): // ADD I, Vx
+                    {
+                        I += V[x];
+                        break;
+                    }
+                case (0xF, _, 0x2, 0x9): // LD F, Vx
+                    {
+                        /* TODO Fx29 - LD F, Vx
 Set I = location of sprite for digit Vx.
 
 The value of I is set to the location for the hexadecimal sprite corresponding to the value of Vx. See section 2.4, Display, for more information on the Chip-8 hexadecimal font.
-
-
-Fx33 - LD B, Vx
-Store BCD representation of Vx in memory locations I, I+1, and I+2.
-
-The interpreter takes the decimal value of Vx, and places the hundreds digit in memory at location in I, the tens digit at location I+1, and the ones digit at location I+2.
-
-
-Fx55 - LD [I], Vx
-Store registers V0 through Vx in memory starting at location I.
-
-The interpreter copies the values of registers V0 through Vx into memory, starting at the address in I.
-
-
-Fx65 - LD Vx, [I]
-Read registers V0 through Vx from memory starting at location I.
-
-The interpreter reads values from memory starting at location I into registers V0 through Vx.
-*/
+                        */
+                        throw new NotImplementedException("LD F, Vx");
+                        break;
+                    }
+                case (0xF, _, 0x3, 0x3): // LD B, Vx
+                    {
+                        Memory[I] = (byte)(V[x] / 100 % 10);
+                        Memory[I + 1] = (byte)(V[x] / 10 % 10);
+                        Memory[I + 2] = (byte)(V[x] % 10);
+                        break;
+                    }
+                case (0xF, _, 0x5, 0x5): // LD [I], Vx
+                    {
+                        for (var i = 0; i <= x; ++i)
+                        {
+                            Memory[I + i] = V[i];
+                        }
+                        break;
+                    }
+                case (0xF, _, 0x6, 0x5):
+                    {
+                        for (var i = 0; i <= x; ++i)
+                        {
+                            V[i] = Memory[I + i];
+                        }
+                        break;
+                    }
                 default:
                     Console.WriteLine($"Ignored instruction: {instructionHigh:X}{instructionLow:X}");
                     break;
@@ -310,28 +340,73 @@ The interpreter reads values from memory starting at location I into registers V
     private void AdvanceToNextInstruction() => PC += 2;
 }
 
-public interface ISoundDevice {
+public interface ISoundDevice
+{
     void On();
     void Off();
 
 }
-public sealed class SoundLogger: ISoundDevice {
+public sealed class SoundLogger : ISoundDevice
+{
     public void On() => Console.WriteLine("Sound device on");
     public void Off() => Console.WriteLine("Sound device off");
 }
 
-public sealed class Keyboard
+public interface IKeyboard
 {
+    public Dictionary<byte, KeyPosition> KeyPositions { get; }
+}
+
+public sealed class FakeKeyboard : IKeyboard
+{
+    public Dictionary<byte, KeyPosition> KeyPositions { get; } = new Dictionary<byte, KeyPosition>
+    {
+        [0x0] = KeyPosition.Up,
+        [0x1] = KeyPosition.Up,
+        [0x2] = KeyPosition.Up,
+        [0x3] = KeyPosition.Up,
+        [0x4] = KeyPosition.Up,
+        [0x5] = KeyPosition.Up,
+        [0x6] = KeyPosition.Up,
+        [0x7] = KeyPosition.Up,
+        [0x8] = KeyPosition.Up,
+        [0x9] = KeyPosition.Up,
+        [0xA] = KeyPosition.Up,
+        [0xB] = KeyPosition.Up,
+        [0xC] = KeyPosition.Up,
+        [0xD] = KeyPosition.Up,
+        [0xE] = KeyPosition.Up,
+        [0xF] = KeyPosition.Up,
+    };
+
     /// <summary>
     /// Mapping from PC input to Chip8 input
     /// </summary>
     public Dictionary<char, byte> KeyMapping { get; private init; } = new()
     {
-        ['6'] = 0x1, ['7'] = 0x2, ['8'] = 0x3, ['9'] = 0xC, 
-        ['z'] = 0x4, ['u'] = 0x5, ['i'] = 0x6, ['o'] = 0xD, 
-        ['h'] = 0x7, ['j'] = 0x8, ['k'] = 0x0, ['l'] = 0xE, 
-        ['n'] = 0xA, ['m'] = 0x0, [','] = 0xB, ['.'] = 0xF, 
+        ['6'] = 0x1,
+        ['7'] = 0x2,
+        ['8'] = 0x3,
+        ['9'] = 0xC,
+        ['z'] = 0x4,
+        ['u'] = 0x5,
+        ['i'] = 0x6,
+        ['o'] = 0xD,
+        ['h'] = 0x7,
+        ['j'] = 0x8,
+        ['k'] = 0x9,
+        ['l'] = 0xE,
+        ['n'] = 0xA,
+        ['m'] = 0x0,
+        [','] = 0xB,
+        ['.'] = 0xF,
     };
+}
+
+public enum KeyPosition
+{
+    Up,
+    Down
 }
 
 public sealed class Display
@@ -358,21 +433,21 @@ public sealed class Sprites
 {
     public Dictionary<byte, byte[,]> Fonts { get; private set; } = new()
     {
-        [0x0] = new byte[5,8] {
+        [0x0] = new byte[5, 8] {
             {1, 1, 1, 1, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
         },
-        [0x1] =  new byte[5,8] {
+        [0x1] = new byte[5, 8] {
             {0, 0, 1, 0, 0, 0, 0, 0},
             {0, 1, 1, 0, 0, 0, 0, 0},
             {0, 0, 1, 0, 0, 0, 0, 0},
             {0, 0, 1, 0, 0, 0, 0, 0},
             {0, 1, 1, 1, 0, 0, 0, 0},
         },
-        [0x2] =  new byte[5,8] {
+        [0x2] = new byte[5, 8] {
             {1, 1, 1, 1, 0, 0, 0, 0},
             {0, 0, 0, 1, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
@@ -386,84 +461,84 @@ public sealed class Sprites
             {0, 0, 0, 1, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
         },
-        [0x4] =  new byte[5,8] {
+        [0x4] = new byte[5, 8] {
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
             {0, 0, 0, 1, 0, 0, 0, 0},
             {0, 0, 0, 1, 0, 0, 0, 0},
         },
-        [0x5] =  new byte[5,8] {
+        [0x5] = new byte[5, 8] {
             {1, 1, 1, 1, 0, 0, 0, 0},
             {1, 0, 0, 0, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
             {0, 0, 0, 1, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
         },
-        [0x6] =  new byte[5,8] {
+        [0x6] = new byte[5, 8] {
             {1, 1, 1, 1, 0, 0, 0, 0},
             {1, 0, 0, 0, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
         },
-        [0x7] =  new byte[5,8] {
+        [0x7] = new byte[5, 8] {
             {1, 1, 1, 1, 0, 0, 0, 0},
             {0, 0, 0, 1, 0, 0, 0, 0},
             {0, 0, 1, 0, 0, 0, 0, 0},
             {0, 1, 0, 0, 0, 0, 0, 0},
             {0, 1, 0, 0, 0, 0, 0, 0},
         },
-        [0x8] =  new byte[5,8] {
+        [0x8] = new byte[5, 8] {
             {1, 1, 1, 1, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
         },
-        [0x9] =  new byte[5,8] {
+        [0x9] = new byte[5, 8] {
             {1, 1, 1, 1, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
             {0, 0, 0, 1, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
         },
-        [0xA] =  new byte[5,8] {
+        [0xA] = new byte[5, 8] {
             {1, 1, 1, 1, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
         },
-        [0xB] =  new byte[5,8] {
+        [0xB] = new byte[5, 8] {
             {1, 1, 1, 0, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 1, 1, 0, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 1, 1, 0, 0, 0, 0, 0},
         },
-        [0xC] =  new byte[5,8] {
+        [0xC] = new byte[5, 8] {
             {1, 1, 1, 1, 0, 0, 0, 0},
             {1, 0, 0, 0, 0, 0, 0, 0},
             {1, 0, 0, 0, 0, 0, 0, 0},
             {1, 0, 0, 0, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
         },
-        [0xD] =  new byte[5,8] {
+        [0xD] = new byte[5, 8] {
             {1, 1, 1, 0, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 0, 0, 1, 0, 0, 0, 0},
             {1, 1, 1, 0, 0, 0, 0, 0},
         },
-        [0xE] =  new byte[5,8] {
+        [0xE] = new byte[5, 8] {
             {1, 1, 1, 1, 0, 0, 0, 0},
             {1, 0, 0, 0, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
             {1, 0, 0, 0, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
         },
-        [0xF] =  new byte[5,8] {
+        [0xF] = new byte[5, 8] {
             {1, 1, 1, 1, 0, 0, 0, 0},
             {1, 0, 0, 0, 0, 0, 0, 0},
             {1, 1, 1, 1, 0, 0, 0, 0},
